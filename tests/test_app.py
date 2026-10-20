@@ -70,5 +70,30 @@ class HeaderAnalysisTests(unittest.TestCase):
         findings = app.analyze_headers({"Server": "example-server"})
         self.assertTrue(any(f["title"] == "Server header is disclosed" for f in findings))
 
+class SecurityPostureTests(unittest.TestCase):
+    def test_no_findings_produce_high_security_score(self):
+        summary = app.summarize_findings([])
+        self.assertGreaterEqual(summary["security_score"], 90)
+        self.assertEqual(summary["risk_level"], "low")
+
+    def test_missing_headers_reduce_security_score(self):
+        findings = app.analyze_headers({})
+        summary = app.summarize_findings(findings)
+        self.assertLess(summary["security_score"], 60)
+        self.assertIn(summary["risk_level"], {"medium", "high", "critical"})
+
+class TLSInspectionTests(unittest.TestCase):
+    def test_tls_summary_reports_expiry_and_validity(self):
+        cert = {
+            "subject": ((("commonName", "example.com"),),),
+            "issuer": ((("commonName", "Example CA"),),),
+            "notBefore": "Jun  1 00:00:00 2024 GMT",
+            "notAfter": "Jun  1 00:00:00 2030 GMT",
+        }
+        summary = app.assess_tls("example.com", cert=cert)
+        self.assertTrue(summary["valid"])
+        self.assertIn("example.com", summary["subject"])
+        self.assertGreater(summary["days_remaining"], 0)
+
 if __name__ == "__main__":
     unittest.main()

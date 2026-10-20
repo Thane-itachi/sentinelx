@@ -38,8 +38,50 @@ HEADER_RULES = [
     ("permissions-policy", "low", "Set a Permissions-Policy that disables browser capabilities the application does not need."),
 ]
 
+SEVERITY_WEIGHTS = {
+    "critical": 25,
+    "high": 18,
+    "medium": 10,
+    "low": 5,
+    "info": 1,
+}
+
+
 def utcnow():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def summarize_findings(findings):
+    findings = findings if isinstance(findings, list) else []
+    severities = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    penalty = 0
+
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        severity = str(finding.get("severity", "info")).lower()
+        if severity not in severities:
+            severity = "info"
+        severities[severity] += 1
+        penalty += SEVERITY_WEIGHTS.get(severity, 1)
+
+    security_score = max(0, min(100, 100 - penalty * 4))
+    if security_score >= 85:
+        risk_level = "low"
+    elif security_score >= 70:
+        risk_level = "medium"
+    elif security_score >= 45:
+        risk_level = "high"
+    else:
+        risk_level = "critical"
+
+    return {
+        "security_score": security_score,
+        "risk_level": risk_level,
+        "issue_count": sum(severities[k] for k in severities if k != "info"),
+        "severity_breakdown": severities,
+        "total_findings": len(findings),
+    }
 
 def init_db():
     with sqlite3.connect(DB_PATH) as db:
@@ -199,6 +241,7 @@ def list_scans(limit=50):
             "id": row["id"], "target": row["target"], "checked_at": row["checked_at"],
             "http_status": row["http_status"], "server": row["server"],
             "findings": findings, "headers": json.loads(row["headers_json"]), "error": row["error"],
+            "summary": summarize_findings(findings),
         })
     return result
 
@@ -227,11 +270,14 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/summary":
             scans = list_scans()
             findings = [f for scan in scans for f in scan["findings"]]
+            posture = summarize_findings(findings)
             return json_response(self, {
                 "assets_assessed": len({s["target"] for s in scans}),
                 "scans_completed": len(scans),
                 "open_findings": len([f for f in findings if f["severity"] != "info"]),
                 "critical_findings": len([f for f in findings if f["severity"] == "critical"]),
+                "security_score": posture["security_score"],
+                "risk_level": posture["risk_level"],
                 "recent_scans": scans[:5],
             })
         if parsed.path == "/":
